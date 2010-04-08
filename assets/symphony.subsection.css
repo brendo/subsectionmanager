@@ -22,15 +22,12 @@ body.subsection form {
 }
 
 body.subsection form fieldset {
-	float: none !important;
-	width: 100% !important;
-	border: 1px solid transpareant;
-	border-bottom: 1px solid #616057 !important;
+	border: 1px solid transparent;
 	margin: 1em 0;
 	padding: 0;
 }
 
-body.subsection fieldset input {
+body.subsection fieldset input[type=text] {
 	width: 100%;
 }
 
@@ -52,6 +49,7 @@ body.subsection form label span {
 }
 
 body.subsection form .actions {
+	clear: both;
 	border: none;
 	padding: 0;
 	margin: 0;
@@ -70,4 +68,7 @@ body.subsection #notice {
 
 body.subsection form input[type="file"] {
 	color: #fff;
+	background: #504F49;
+	border: 1px solid rgba(255,255,255,0);
+	outline: 1px solid rgba(255,255,255,0.1);
 }

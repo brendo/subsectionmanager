@@ -5,6 +5,11 @@
 	require_once(EXTENSIONS . '/subsectionmanager/lib/class.subsectionmanager.php');
 
 	Class fieldSubsectionmanager extends Field {
+		protected static $ready = false;
+		protected static $db = null;
+		protected static $em = null;
+		protected static $fm = null;
+		protected static $sm = null;
 
 		/**
 		 * Initialize Subsection Manager as unrequired field
@@ -13,6 +18,20 @@
 			parent::__construct($parent);
 			$this->_name = __('Subsection Manager');
 			$this->_required = false;
+
+			if (class_exists('Frontend')) {
+				$symphony = Frontend::instance();
+			}
+			else {
+				$symphony = Administration::instance();
+			}
+
+			if (!self::$ready) {
+				self::$db = Symphony::Database();
+				self::$em = new EntryManager($symphony);
+				self::$fm = new FieldManager($symphony);
+				self::$sm = new SectionManager($symphony);
+			}
 		}
 
 		/**
@@ -53,8 +72,7 @@
 
 			// Related section
 			$label = Widget::Label(__('Related section'));
-			$sectionManager = new SectionManager($this->_engine);
-		  	$sections = $sectionManager->fetch(NULL, 'ASC', 'name');
+		  	$sections = self::$sm->fetch(NULL, 'ASC', 'name');
 			$options = array(
 				array('', false, __('None Selected')),
 			);
@@ -81,7 +99,7 @@
 			}
 			$label->setValue(__('%s Allow selection of multiple options', array($input->generate())));
 			$wrapper->appendChild($label);
-			
+
 			// Preview options
 			$label = Widget::Label();
 			$input = Widget::Input('fields['.$this->get('sortorder').'][show_preview]', 'yes', 'checkbox');
@@ -105,7 +123,7 @@
 						foreach($fields as $field) {
 							if($field->get('type') == 'taglist' || $field->get('type') == 'select' ) {
 								// fetch dynamic filter values
-								$entries = $this->Database->fetch(
+								$entries = self::$db->fetch(
 									"SELECT DISTINCT `value` FROM `tbl_entries_data_" . $field->get('id') . "` LIMIT 100"
 								);
 								foreach($entries as $entry) {
@@ -246,16 +264,16 @@
 			// item caption
 			$fields['caption'] = $this->get('caption');
 			if($this->get('caption') == '') {
-			
+
 		  		// Fetch fields in subsection
-				$subsection_fields = Administration::instance()->Database->fetch(
+				$subsection_fields = self::$db->fetch(
 					"SELECT element_name, type
 					FROM tbl_fields
 					WHERE parent_section = '" . $this->get('subsection_id') . "'
 					ORDER BY sortorder ASC
 					LIMIT 10"
 				);
-				
+
 				// Generate default caption
 				$text = $file = '';
 				foreach($subsection_fields as $subfield) {
@@ -264,10 +282,10 @@
 						if($text == '') $text = '{$' . $subfield['element_name'] . '}';
 					}
 					else {
-						if($file == '') $file = '{$' . $subfield['element_name'] . '}';				
+						if($file == '') $file = '{$' . $subfield['element_name'] . '}';
 					}
 				}
-				
+
 				// Caption markup
 				if($text != '' && $file != '') {
 					$fields['caption'] = $text . '<br /> <em>' . $file . '</em>';
@@ -275,19 +293,17 @@
 				else {
 					$fields['caption'] = $text . $file;
 				}
-								
+
 			}
 
 			// data source fields
 			$fields['included_fields'] = (is_null($this->get('included_fields')) ? NULL : implode(',', $this->get('included_fields')));
 
 			// delete old field settings
-			Administration::instance()->Database->query(
-				"DELETE FROM `tbl_fields_".$this->handle()."` WHERE `field_id` = '$id' LIMIT 1"
-			);
+			self::$db->delete("`tbl_fields_".$this->handle()."`", " `field_id` = '$id' LIMIT 1");
 
 			// save new field setting
-			return Administration::instance()->Database->insert($fields, 'tbl_fields_' . $this->handle());
+			return self::$db->insert($fields, 'tbl_fields_' . $this->handle());
 
 		}
 
@@ -334,7 +350,7 @@
 			preg_match_all('/\d+/', $currentPageURL, $entry_id, PREG_PATTERN_ORDER);
 			$entry_id = $entry_id[0][count($entry_id[0])-1];
 			if($entry_id) {
-				$order = Administration::instance()->Database->fetchVar('order', 0,
+				$order = self::$db->fetchVar('order', 0,
 					"SELECT `order`
 					FROM `tbl_fields_subsectionmanager_sorting`
 					WHERE `entry_id` = " . $entry_id . "
@@ -355,14 +371,14 @@
 			$content['empty'] = '<li class="empty message"><span>' . __('There are no selected items') . '</span></li>';
 			$selected = new XMLElement('ul', $content['empty'] . $content['html'], array('class' => 'selection'));
 			$stage->appendChild($selected);
-			
+
 			// Append item template
 			$thumb = '<img src="' . URL . '/extensions/subsectionmanager/assets/images/new.gif" width="40" height="40" class="thumb" />';
 			$item = new XMLElement('li', $thumb . '<span>' . __('New item') . '<br /><em>' . __('Please fill out the form below.') . '</em></span><a class="destructor">' . __('Remove Item') . '</a>', array('class' => 'item template preview'));
 			$selected->appendChild($item);
-			
+
 			// Append drawer template
-			$subsection_handle = Administration::instance()->Database->fetchVar('handle', 0,
+			$subsection_handle = self::$db->fetchVar('handle', 0,
 				"SELECT `handle`
 				FROM `tbl_sections`
 				WHERE `id` = '" . $this->get('subsection_id') . "'
@@ -404,7 +420,7 @@
 		 */
 		function createTable(){
 
-			return Administration::instance()->Database->query(
+			return self::$db->query(
 				"CREATE TABLE IF NOT EXISTS `tbl_entries_data_" . $this->get('id') . "` (
 				`id` int(11) unsigned NOT NULL auto_increment,
 				`entry_id` int(11) unsigned NOT NULL,
@@ -438,7 +454,7 @@
 		 * @param boolean $encode
 		 * @param string $mode
 		 */
-		public function appendFormattedElement(&$wrapper, $data, $encode = false) {
+		public function appendFormattedElement(&$wrapper, $data, $encode = false, $mode = "entries") {
 
 			// unify data
 			if(!is_array($data['relation_id'])) $data['relation_id'] = array($data['relation_id']);
@@ -455,55 +471,58 @@
 			}
 
 			// fetch field data
-			$entryManager = new EntryManager($this->_engine);
-			$entries = $entryManager->fetch($data['relation_id'], $this->get('subsection_id'));
+			$entries = self::$em->fetch($data['relation_id'], $this->get('subsection_id'));
+			$subsectionmanager->setAttribute('entries', count($entries));
 
-			// sort entries
-			$order = $this->_Parent->_Parent->Database->fetchVar('order', 0,
-				"SELECT `order`
-				FROM `tbl_fields_subsectionmanager_sorting`
-				WHERE `entry_id` = " . $wrapper->getAttribute('id') . "
-				AND `field_id` = " . $this->get('id') . "
-				LIMIT 1"
-			);
-			$sorted_ids = explode(',', $order);
-			$sorted_entries = array();
-			if(!empty($sorted_ids) && $sorted_ids[0] != 0 && !empty($sorted_ids[0])) {
-				foreach($sorted_ids as $id) {
-					foreach($entries as $entry) {
-						if($entry->get('id') == $id) {
-							$sorted_entries[] = $entry;
+			if($mode == "entries") {
+				// sort entries
+				$order = self::$db->fetchVar('order', 0,	sprintf("
+							SELECT `order`
+							FROM `tbl_fields_subsectionmanager_sorting`
+							WHERE `entry_id` = %d
+							AND `field_id` = %d
+							LIMIT 1
+						",
+						$wrapper->getAttribute('id'),
+						$this->get('id')
+					)
+				);
+				$sorted_ids = explode(',', $order);
+				$sorted_entries = array();
+				if(!empty($sorted_ids) && $sorted_ids[0] != 0 && !empty($sorted_ids[0])) {
+					foreach($sorted_ids as $id) {
+						foreach($entries as $entry) {
+							if($entry->get('id') == $id) {
+								$sorted_entries[] = $entry;
+							}
 						}
 					}
 				}
-			}
-			else {
-				$sorted_entries = $entries;
-			}
-
-			// build XML
-			$count = 1;
-			foreach($sorted_entries as $entry) {
-				// fetch entry data
-				$entry_data = $entry->getData();
-
-				// create entry element
-				$item = new XMLElement('item');
-				// populate entry element
-				$included_fields = explode(',', $this->get('included_fields'));
-				foreach ($entry_data as $field_id => $values) {
-					// only append if field is listed or if list empty
-					if(in_array($field_id, $included_fields) || empty($included_fields[0])) {
-						$item_id = $entry->get('id');
-						$item->setAttribute('id', $item_id);
-						$field =& $entryManager->fieldManager->fetch($field_id);
-						$field->appendFormattedElement($item, $values, false);
-					}
+				else {
+					$sorted_entries = $entries;
 				}
-				// append entry element
-				$subsectionmanager->appendChild($item);
-				$subsectionmanager->setAttribute('items', $count);
-				$count++;
+
+				// build XML
+				$included_fields = explode(',', $this->get('included_fields'));
+				foreach($sorted_entries as $entry) {
+					// fetch entry data
+					$entry_data = $entry->getData();
+
+					// create entry element
+					$item = new XMLElement('entry');
+					$item->setAttribute('id', $entry->get('id'));
+
+					// populate entry element
+					foreach ($entry_data as $field_id => $values) {
+						// only append if field is listed or if list empty
+						if(in_array($field_id, $included_fields) || empty($included_fields[0])) {
+							$field = self::$fm->fetch($field_id);
+							$field->appendFormattedElement($item, $values, false);
+						}
+					}
+					// append entry element
+					$subsectionmanager->appendChild($item);
+				}
 			}
 
 			// append Subsection Manager to data source
@@ -551,23 +570,12 @@
  		/**
 		 * Returns array of includable elements used in data source manager
 		 */
-/*		public function fetchIncludableElements() {
-
-			$sectionManager = new SectionManager($this->_Parent);
-		  	$section = $sectionManager->fetch($this->get('subsection_id'));
-		  	$fields = $section->fetchFields();
-		  	$elements = array();
-		  	
-		  	// Fetch fields from subsection
-		  	foreach($fields as $field) {
-		  		foreach($field->fetchIncludableElements() as $element) {
-		  			$elements[] = $this->get('element_name') . ': ' . $element;
-		  		}
-		  	}
-			
-			return $elements;
-			
-		}*/
+		public function fetchIncludableElements() {
+			return array(
+				$this->get('element_name') . ': count',
+				$this->get('element_name') . ': entries'
+			);
+		}
 
 
 	}
